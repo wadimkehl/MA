@@ -2,13 +2,14 @@
 QT += widgets core gui
 TARGET = master
 CONFIG -= app_bundle
+CONFIG += c++11
 
 QMAKE_CXXFLAGS += -std=c++11 -march=native -O3
 
 SOURCES += main.cpp scribblearea.cpp tool.cpp icgbench.cpp
-HEADERS  += scribblearea.h tool.h CImg.h
+HEADERS  += scribblearea.h tool.h
 OTHER_FILES += notes.txt gpu.cu gpu.h
-INCLUDEPATH += arma/include wavelet
+INCLUDEPATH += wavelet
 
 
 CUDA_DIR = /usr/local/cuda
@@ -17,16 +18,17 @@ NVCC = $$CUDA_DIR/bin/nvcc
 
 # OSX
 macx:{
-    LIBS += wavelet/libwavelet.a -lcudart
+    LIBS += -lcudart -L/usr/local/lib
     QMAKE_LIBDIR += $$CUDA_DIR/lib
     INCLUDEPATH += /usr/local/include
+    QMAKE_MACOSX_DEPLOYMENT_TARGET = 10.11
 }
 
 # Linux
 unix:!macx{
     QMAKE_LIBDIR += $$CUDA_DIR/lib64
     INCLUDEPATH += /opt/tum/external/include/
-    LIBS += -Larma wavelet/libwavelet.a -lcudart -L/opt/tum/external/lib
+    LIBS += wavelet/libwavelet.a -lcudart -L/opt/tum/external/lib
 
 }
 

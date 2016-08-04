@@ -533,15 +533,7 @@ bool Tool::doKernelEstimation(bool doAll)
         mats[s.label].push_back(t);
     }
 
-    /*  TODO
-    for(unsigned i=0; i < nr_labels; i++)
-    {
-        Mat a = cv::cov(mats.at(i));
-        double s = sum(sum(abs(a)));
-        a = a/s;
-        //cout << a << endl;
-    }
-    */
+
     if(doAll)
     {
         if(Color && ColorMode>0)
@@ -564,7 +556,6 @@ bool Tool::doKernelEstimation(bool doAll)
 
 
     Mat im = fromQimage(in->back);
-    int unstable=0;
     unsigned w = im.cols;
     unsigned h = im.rows;
 
@@ -593,7 +584,6 @@ bool Tool::doKernelEstimation(bool doAll)
 
 
     vector<Mat> maha(nr_labels);
-
     if(gpu.ani)
     {
         for(Scribble &s : scribbles_orig)
@@ -655,7 +645,6 @@ bool Tool::doKernelEstimation(bool doAll)
         // Copy color data into gpu array
         for(unsigned i=0; i < Colors.size();i++ )
             memcpy(&(gpu.colors[w*h*i]), Colors[i].data,sizeof(float)*w*h);
-
 
         if(AutoParam)
         {
@@ -730,7 +719,7 @@ bool Tool::doKernelEstimation(bool doAll)
     }
 */
 
-
+    /*
 #ifdef CONST_GPU
     if(!gpu_density(gpu,const_gpu))
 #else
@@ -740,21 +729,100 @@ bool Tool::doKernelEstimation(bool doAll)
         cerr << "Kernel estimation failed!" << endl;
         return false;
     }
-
-
-    // Copy likelihoods and clamp to good numeric bounds
+    // Copy likelihoods
     likely.clear();
-    float clamp = 1000.f;
     for(unsigned l=0; l < nr_labels; l++)
     {
         likely.push_back(Mat(w,h,CV_32F));
         for(unsigned x=0; x < w; x++)
             for(unsigned y=0; y < h; y++)
-            {
-                float value = log(gpu.likely[w*h*l + y*w + x]);
-                likely.at(l).at<float>(x,y)= max(-clamp,min(value,clamp));
-            }
+                likely.at(l).at<float>(x,y)= log(gpu.likely[w*h*l + y*w + x]);
     }
+
+*/
+
+    likely.clear();
+    for(unsigned l=0; l < nr_labels; l++)
+        likely.push_back(Mat(w,h,CV_32F));
+
+    auto gauss = [](float x,float var) -> float{
+        return exp(-0.5f*x*x/(var*var))/(var*sqrt(2*M_PI));
+    };
+
+    float scale = 1.0f/max(w,h);
+    for (int x = 0; x < w; ++x)
+        for (int y = 0; y < h; ++y)
+        {
+
+            // Find NN-scribble
+            float alpha = Space? kernel_alpha : 0.0f;
+            if(alpha>0)
+            {
+                float nnScribble_dist= w*w+h*h;
+                for(Scribble &s : scribbles)
+                {
+                    float dist = pow(x-s.x,2) + pow(y-s.y,2);
+                    if(dist < nnScribble_dist)
+                        nnScribble_dist=dist;
+                }
+                if(nnScribble_dist < 1.f) nnScribble_dist=1.f;
+                alpha *= sqrt(nnScribble_dist)*scale;
+            }
+
+            // Run through scribbles and estimate
+            for(Scribble &s : scribbles)
+            {
+                float space=1.0f,color=1.0f;
+                float sigma = kernel_sigma;
+
+                if(alpha>0)
+                {
+                    float distance = pow(x-s.x,2) + pow(y-s.y,2);
+                    space = gauss(sqrt(distance)*scale,alpha);
+                }
+
+                if(sigma>0)
+                {
+                    float r = Colors[0].at<float>(x,y) - Colors[0].at<float>(s.x,s.y);
+                    float g = Colors[1].at<float>(x,y) - Colors[1].at<float>(s.x,s.y);
+                    float b = Colors[2].at<float>(x,y) - Colors[2].at<float>(s.x,s.y);
+                    color = gauss(r,sigma)*gauss(g,sigma)*gauss(b,sigma);
+                }
+
+                likely[s.label].at<float>(x,y) += space*color;
+            }
+        }
+
+    for (Mat &m : likely)
+        cv::log(m,m);
+
+
+    // clamp to good numeric bounds
+    float clamp = 1000.f;
+    for (Mat &m : likely)
+        for(unsigned x=0; x < w; x++)
+            for(unsigned y=0; y < h; y++)
+                m.at<float>(x,y) = max(-clamp,min(m.at<float>(x,y),clamp));
+
+    // Divide by scribble number and determine labeling
+    Mat labeling(w,h,CV_32F);
+    for(unsigned x=0; x < w; x++)
+        for(unsigned y=0; y < h; y++)
+        {
+            float max=0;
+            int label=-1;
+            for(int i=0; i < nr_labels;i++)
+            {
+                float curr = likely[i].at<float>(x,y) / ((float)label_count[i]);
+                if(curr > max)
+                {
+                    max = curr;
+                    label = i;
+                }
+            }
+            labeling.at<float>(x,y) = label;
+        }
+
 
 
     for(unsigned x=0; x < w; x++)
@@ -765,7 +833,9 @@ bool Tool::doKernelEstimation(bool doAll)
             for(unsigned l=0; l < nr_labels-1;l++)
                 stable &= (likely.at(l).at<float>(x,y) != likely.at(l+1).at<float>(x,y));
 
-            Vec3f lab = getRgbOfLabel(gpu.labeling[y*w+x]);
+            //Vec3f lab = getRgbOfLabel(gpu.labeling[y*w+x]);
+            Vec3f lab = getRgbOfLabel(labeling.at<float>(x,y));
+
             if(!stable) lab = getRgbOfLabel(-1);
             im.at<Vec3f>(y,x) = im.at<Vec3f>(y,x)*0.5 + lab*0.5;
         }
@@ -1307,7 +1377,7 @@ Mat Tool::makeBeautifulSegmentation()
 
 bool Tool::Wavelet(bool show)
 {
-
+    /*
     readScribbles();
 
     int w = in->back.width();
@@ -1317,12 +1387,6 @@ bool Tool::Wavelet(bool show)
         for (int j=0; j < h;j++)
             img->to(j,i,qGray(in->back.pixel(i,j)));
 
-
-
-    /*
-    When using some of the filters (Haar, Daub, Villa) on images with side lengths
-    which are not powers of two, the precision is far from satisfactory.
-    */
 
     FilterSet *flt = &FilterSet::filterFromString ((char*)WaveletFilter.toStdString().c_str());
     WaveletTransform *transform = new PyramidTransform (*img, *flt);
@@ -1547,7 +1611,7 @@ bool Tool::Wavelet(bool show)
                 out->setImage(wavelet);
             }
         }
-        */
+
 
         TextureDone=true;
         delete img;
@@ -1582,7 +1646,7 @@ bool Tool::Wavelet(bool show)
         return false;
     }
 
-
+*/
 
 }
 
@@ -1701,7 +1765,7 @@ void Tool::doTest()
 }
 
 void Tool::doDumpImage()
-{    
+{
     out->back.save("dump_right.png");
 
 }

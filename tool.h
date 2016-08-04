@@ -7,7 +7,7 @@
 
 #include <vector>
 //#include <armadillo>
-#include <Wave.hh>
+//#include <Wave.hh>
 #include "icgbench.h"
 #include "gpu.h"
 
@@ -39,7 +39,7 @@ public:
     std::vector<Scribble> scribbles, scribbles_orig;
     vector<unsigned> label_count,label_count_orig;
     unsigned TexWinSize,NrWaveletSteps,BrushSize,currentIt, nr_labels,eig,TexDim;
-    double kernel_alpha,kernel_sigma,kernel_beta, kernel_delta,seg_it, seg_tau,seg_lambda, seg_eta;
+    float kernel_alpha,kernel_sigma,kernel_beta, kernel_delta,seg_it, seg_tau,seg_lambda, seg_eta;
 
     vector<Mat> likely;
 
