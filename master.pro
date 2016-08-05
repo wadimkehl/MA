@@ -9,7 +9,6 @@ QMAKE_CXXFLAGS += -std=c++11 -march=native -O3
 SOURCES += main.cpp scribblearea.cpp tool.cpp icgbench.cpp
 HEADERS  += scribblearea.h tool.h
 OTHER_FILES += notes.txt gpu.cu gpu.h
-INCLUDEPATH += wavelet
 
 
 CUDA_DIR = /usr/local/cuda
@@ -28,7 +27,7 @@ macx:{
 unix:!macx{
     QMAKE_LIBDIR += $$CUDA_DIR/lib64
     INCLUDEPATH += /opt/tum/external/include/
-    LIBS += wavelet/libwavelet.a -lcudart -L/opt/tum/external/lib
+    LIBS += -lcudart -L/opt/tum/external/lib
 
 }
 

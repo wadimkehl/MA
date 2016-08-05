@@ -6,8 +6,6 @@
 #include <QImage>
 
 #include <vector>
-//#include <armadillo>
-//#include <Wave.hh>
 #include "icgbench.h"
 #include "gpu.h"
 
@@ -50,7 +48,7 @@ public:
     Mat labeling, groundtruth, LDAimage, G;
 
 
-    vector<Mat> Colors,Textures, primal, dual;
+    vector<Mat> Textures, primal, dual;
     vector<Mat> WaveletHH,WaveletLH,WaveletHL, WaveletLL;
     QString WaveletFilter;
 
@@ -64,12 +62,12 @@ public:
     GPU_DATA gpu;
     GPU_DATA const_gpu;
 
-    bool LDA(Mat &Projector,Mat Call, vector<Mat> Ceach);
-    bool OLDA(Mat &Projector,Mat Call, vector<Mat> Ceach, vector<Scribble> &scrib, vector<unsigned> &count);
+    Mat LDA(Mat Call, vector<Mat> Ceach);
+    Mat OLDA(Mat Call, vector<Mat> Ceach, vector<Scribble> &scrib, vector<unsigned> &count);
 
     void readScribbles();
     double DiceScore(QString file);
-    bool ColorLDA(bool show,bool ortho);
+    Mat ColorLDA(bool show,bool ortho);
     bool GTerm(bool show);
     bool Wavelet(bool show);
     bool GPUSegmentation(bool stepwise);
@@ -80,6 +78,8 @@ public:
     void projectSimplex(vector<double> &in);
     void getKNN(int x, int y, vector<Scribble> out);
     void printPixelInformation(unsigned x, unsigned y);
+
+    Mat computeLabeling(vector<Mat> &input);
 
     Mat makeBeautifulSegmentation();
 

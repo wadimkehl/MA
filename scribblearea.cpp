@@ -111,8 +111,6 @@ void ScribbleArea::setLabel(int x, int y, int label, int brushSize)
 
             scribbles[i][j] = label;
         }
-
-
 }
 
 void ScribbleArea::setIcgLabel(int x, int y, int label, int brushSize, Mat &gt)
@@ -144,9 +142,7 @@ void ScribbleArea::setIcgLabel(int x, int y, int label, int brushSize, Mat &gt)
 
 void ScribbleArea::removeLastLabel()
 {
-
     if(readOnly) return;
-
     for (int i = lastClick.x()-brushSize/2.0; i <= lastClick.x()+((brushSize/2.0));i++)
         for (int j = lastClick.y()-brushSize/2.0; j <= lastClick.y()+((brushSize/2.0));j++)
         {
@@ -157,8 +153,6 @@ void ScribbleArea::removeLastLabel()
             scribbles[i][j] = -1;
             scribbles_orig[i][j] = -1;
         }
-
-
 }
 
 void ScribbleArea::mousePressEvent(QMouseEvent *event)
@@ -268,9 +262,8 @@ void ScribbleArea::paintEvent(QPaintEvent *event)
             painter.setPen(p);
             painter.drawPoint(i,j);
         }
-
+    QGraphicsView::paintEvent(event);
 }
-
 
 
 QSize ScribbleArea::sizeHint() const

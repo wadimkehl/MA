@@ -22,11 +22,6 @@
 #include "tool.h"
 
 
-
-#ifndef __APPLE__
-#define CONST_GPU
-#endif
-
 using namespace std;
 
 
@@ -37,8 +32,8 @@ QImage fromCVMat(Mat &m)
     {
     case CV_32FC3:
     {
-        for(int x=0; x < m.cols; x++)
-            for(int y=0; y < m.rows; y++){
+        for(int y=0; y < m.rows; y++)
+            for(int x=0; x < m.cols; x++){
                 Vec3f val= m.at<Vec3f>(y,x)*255;
                 image.setPixel(x,y,qRgb(val[0],val[1],val[2]));   // RGB
             }
@@ -47,8 +42,8 @@ QImage fromCVMat(Mat &m)
 
     case CV_32FC1:
     {
-        for(int x=0; x < m.cols; x++)
-            for(int y=0; y < m.rows; y++){
+        for(int y=0; y < m.rows; y++)
+            for(int x=0; x < m.cols; x++){
                 float f = m.at<float>(y,x)*255;
                 image.setPixel(x,y,qRgb(f,f,f));
             }
@@ -67,8 +62,8 @@ QImage fromCVMat(Mat &m)
 Mat fromQimage(QImage &image)
 {
     Mat m(image.height(),image.width(),CV_32FC3);
-    for(int x=0; x < m.cols; x++)
-        for(int y=0; y < m.rows; y++){
+    for(int y=0; y < m.rows; y++)
+        for(int x=0; x < m.cols; x++) {
             QRgb rgb = image.pixel(x,y);
             m.at<Vec3f>(y,x)[2] = qRed(rgb)/255.f;
             m.at<Vec3f>(y,x)[1] = qGreen(rgb)/255.f;
@@ -76,6 +71,7 @@ Mat fromQimage(QImage &image)
         }
     return m;
 }
+
 
 
 
@@ -101,22 +97,19 @@ Tool::Tool() : QObject()
     BrushSize=1;
     EstimateGPU = true;
     seg_tau = 0.5;
-    seg_eta = 0.1;
+    seg_eta = 1.0;
     ColorDone=TextureDone = false;
     AutoParam = false;
 
-
-#ifdef CONST_GPU
-
-
     gpu.likely = new float[1000*1000*15];
-    gpu.labeling = new int[1000*1000];
     gpu.scribbles = new int[1000*1000*3];
     gpu.label_count = new int[15];
     gpu.colors = new float[1000*1000*3];
     gpu.int_params = new int[INT_PARAMS];
     gpu.float_params = new float[2 + 2*15];
     gpu.textures = new float[1000*1000*10];
+
+    /*
     gpu.hh = new float[1000*1000*3];
     gpu.hl = new float[1000*1000*3];
     gpu.lh = new float[1000*1000*3];
@@ -126,17 +119,17 @@ Tool::Tool() : QObject()
     gpu.hh_stddev = new float[1000*1000*3];
     gpu.hl_stddev = new float[1000*1000*3];
     gpu.lh_stddev = new float[1000*1000*3];
+*/
 
     gpu.primal = new float[2*1000*1000*15];
     gpu.dual = new float[2*1000*1000*15];
     gpu.g = new float[1000*1000];
     gpu.temp = new float[1000*1000*15];
 
-
-
     // Takes about 500MB of vmem
     cudaDeviceReset();
-    //   cerr << "USING CONSTANT GPU MEMORY" << endl;
+
+    /*
     CUDA_2(cudaMallocPitch((void**) &const_gpu.hh,&const_gpu.wave_p,        1000*sizeof(float), 1000*3), "MallocHH") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.hl,&const_gpu.wave_p,        1000*sizeof(float), 1000*3), "MallocHL") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.lh,&const_gpu.wave_p,        1000*sizeof(float), 1000*3), "MallocLH") ;
@@ -146,6 +139,7 @@ Tool::Tool() : QObject()
     CUDA_2(cudaMallocPitch((void**) &const_gpu.hh_stddev,&const_gpu.wave_p, 1000*sizeof(float), 1000*3), "MallocHHSTDDEV") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.hl_stddev,&const_gpu.wave_p, 1000*sizeof(float), 1000*3), "MallocHLSTDDEV") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.lh_stddev,&const_gpu.wave_p, 1000*sizeof(float), 1000*3), "MallocLHSTDDEV") ;
+*/
 
     CUDA_2(cudaMallocPitch((void**) &const_gpu.likely,  &const_gpu.lt_p,    1000*sizeof(float), 1000*15), "MallocLikely") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.primal,  &const_gpu.pd_p,    1000*sizeof(float), 1000*15*2), "MallocPrimal") ;
@@ -155,13 +149,9 @@ Tool::Tool() : QObject()
     CUDA_2(cudaMallocPitch((void**) &const_gpu.colors,  &const_gpu.col_p,   1000*sizeof(float), 1000*3), "MallocColors") ;
     CUDA_2(cudaMallocPitch((void**) &const_gpu.textures,&const_gpu.tex_p,   1000*sizeof(float), 1000*10), "MallocTex") ;
 
-    CUDA_2(cudaMalloc(&(const_gpu.labeling),   1000*1000*sizeof(int)),"MallocLabeling") ;
     CUDA_2(cudaMalloc(&(const_gpu.scribbles),  1000*1000*sizeof(int)*3),"MallocScribbles") ;
     CUDA_2(cudaMalloc(&(const_gpu.label_count),       15*sizeof(int)),"MallocLabelCount") ;
     CUDA_2(cudaMalloc(&(const_gpu.float_params),(2+2*15)*sizeof(float)),"MallocFLOATPARAMS") ;
-
-#endif
-
 
 
 }
@@ -171,6 +161,28 @@ Tool::~Tool()
 
 }
 
+
+Mat Tool::computeLabeling(vector<Mat> &input)
+{
+    Mat out(input[0].size(),CV_32F);
+    for(int r=0; r < input[0].rows; r++)
+        for(int c=0; c < input[0].cols; c++)
+        {
+            float max=numeric_limits<float>::lowest();
+            int label=-1;
+            for(size_t i=0; i < input.size();i++)
+            {
+                float curr = input[i].at<float>(r,c);
+                if(curr > max)
+                {
+                    max = curr;
+                    label = i;
+                }
+            }
+            out.at<float>(r,c) = label;
+        }
+    return out;
+}
 
 void Tool::readScribbles()
 {
@@ -334,13 +346,13 @@ void Tool::setIterations(int it)
 }
 
 
-bool Tool::ColorLDA(bool show,bool ortho)
+Mat Tool::ColorLDA(bool show,bool ortho)
 {
 
-    if(scribbles_orig.size() == 0 || nr_labels < 2)
+    if(scribbles_orig.empty() || nr_labels < 2)
     {
         cout << "No scribbles read!" << endl;
-        return false;
+        return Mat();
     }
 
     Mat Call;
@@ -355,57 +367,42 @@ bool Tool::ColorLDA(bool show,bool ortho)
         Call.push_back(t2);
     }
 
-    Mat LDAColorMatrix(3,3,CV_32F);
+    Mat result;
+    if(ortho)  result = OLDA(Call,mats, scribbles_orig,label_count_orig);
+    else result = LDA(Call,mats);
+    if(result.empty()) return result;
 
-    bool result;
-    if(ortho)  result = OLDA(LDAColorMatrix,Call,mats, scribbles_orig,label_count_orig);
-    else result = LDA(LDAColorMatrix,Call,mats);
-    if(result == false) return false;
-
-    int w = in->back.width();
-    int h = in->back.height();
     Mat temp = fromQimage(in->back);
-    cv::split(temp,Colors);
 
-    Vec3f min,max;
-    for(int x=0; x < w; x++)
-        for(int y=0; y < h; y++)
+    vector<Mat> colors;
+    cv::split(temp,colors);
+    for(int r=0; r < temp.rows; r++)
+        for(int c=0; c < temp.cols; c++)
         {
-            Vec3f rgb = temp.at<Vec3f>(x,y);
-            rgb = LDAColorMatrix.dot(rgb);
+            Vec3f l = temp.at<Vec3f>(r,c);
+            Mat rgb = result * Mat(l, false);
             for(int j=0; j < 3; j++)
-            {
-                Colors.at(j).at<float>(x,y) = rgb[j];
-                min(j) = std::min(min(j),Colors.at(j).at<float>(x,y));
-                max(j) = std::max(max(j),Colors.at(j).at<float>(x,y));
-            }
-
-
+                colors.at(j).at<float>(r,c) = rgb.ptr<float>(0)[j];
         }
+
+    for (Mat &m : colors) cv::normalize(m,m,0,1,NORM_MINMAX);
+
+    cv::merge(colors,LDAimage);
+
+    if (eig==0) cv::merge(colors,temp);
+    else if(eig==1) colors[0].copyTo(temp);
+    else if(eig==2) colors[1].copyTo(temp);
+    else if(eig==3) colors[2].copyTo(temp);
 
     ColorDone=true;
-    LDAimage = Mat(w,h,CV_32F);
-    for(int x=0; x < temp.rows; x++)
-        for(int y=0; y < temp.rows; y++)
-        {
-            float r = (Colors.at(0).at<float>(x,y)-min(0))/(max(0)-min(0));
-            float g = (Colors.at(1).at<float>(x,y)-min(1))/(max(1)-min(1));
-            float b = (Colors.at(2).at<float>(x,y)-min(2))/(max(2)-min(2));
-            float c = (r+g+b)/3.0f;
-            LDAimage.at<float>(x,y)=c;
-            Vec3f pix;
-            if(eig==0) pix = Vec3f(r,g,b);
-            else if (eig==1) pix = Vec3f(r,r,r);
-            else if (eig==2) pix = Vec3f(g,g,g);
-            else if (eig==3) pix = Vec3f(b,b,b);
-            else if (eig==4) pix = Vec3f(c,c,c);
-            temp.at<Vec3f>(x,y) = pix;
-        }
 
-    if(!show) return true;
-    QImage im = fromCVMat(temp);
-    out->setImage(im);
-    return true;
+
+    if(show)
+    {
+        QImage im = fromCVMat(temp);
+        out->setImage(im);
+    }
+    return LDAimage;
 
 }
 
@@ -415,14 +412,14 @@ bool Tool::ColorLDA(bool show,bool ortho)
 void Tool::doColorLDA()
 {
     readScribbles();
-    if(!ColorLDA(true,false))
+    if(ColorLDA(true,false).empty())
         cerr << "ColoLDA failed" << endl;
 }
 
 void Tool::doColorOLDA()
 {
     readScribbles();
-    if(!ColorLDA(true,true))
+    if(ColorLDA(true,true).empty())
         cerr << "ColoLDA failed" << endl;}
 
 
@@ -440,77 +437,52 @@ bool Tool::GTerm(bool show)
 {
 
     readScribbles();
-    if(scribbles.size() == 0)
+    if(scribbles.empty())
         return false;
 
-    QImage im(in->back);
-    int w = im.width();
-    int h = im.height();
-    Mat values(w,h,CV_32F,Scalar(0));
+    Mat temp = fromQimage(in->back);
+    Mat values = Mat::zeros(temp.size(),CV_32F);
+    G = Mat(values.size(),CV_32F,Scalar(1));
 
-    // G is color gradient
-    if(GMode==1)
+
+    if (GMode > 0)
     {
-        if(ColorMode>0 && !ColorLDA(false,ColorMode==2)) return false;
-
-        // standard grayscale
-        if(ColorMode==0)
+        // G is color gradient
+        if(GMode==1)
         {
-            Colors.clear();
-            for(int i=0; i < 3;i++)
-                Colors.push_back(Mat(w,h,CV_32F));
+            if(ColorMode>0)
+                values = ColorLDA(false,ColorMode==2);
 
-            for(int x=0; x < w; x++)
-                for(int y=0; y < h; y++)
-                {
-                    int col = im.pixel(x,y);
-                    Colors.at(0).at<float>(x,y) = qRed(col);
-                    Colors.at(1).at<float>(x,y) = qGreen(col);
-                    Colors.at(2).at<float>(x,y) = qBlue(col);
-                    values.at<float>(x,y) = qGray(col);
-                }
+            // standard grayscale if mode set or LDA failed
+            if(ColorMode==0 || values.empty()) cv::cvtColor(temp,values,COLOR_BGR2GRAY);
+
         }
-        // else in OLDA space
-        else Colors[0].copyTo(values);
 
-    }
+        // G is texture gradient
+        if(GMode==2)
+        {
 
-    // G is texture gradient
-    if(GMode==2)
-    {
+            if (!Wavelet(false)) return false;
+            for(Mat &t : Textures) values += t;
+            values /= Textures.size();
 
-        if (!Wavelet(false)) return false;
-        for(Mat &t : Textures) values += t;
-        values /= Textures.size();
+        }
 
-    }
 
-    G = Mat(w,h,CV_32F,Scalar(1));
-    if(GMode>0)
-    {
-        for(int x=1; x < w-1; x++)
-            for(int y=1; y < h-1; y++)
+        for(int r=1; r < G.rows-1; r++)
+            for(int c=1; c < G.cols-1; c++)
             {
                 float dx=0,dy=0;
-                dx = values.at<float>(x+1,y)-values.at<float>(x-1,y);
-                dy = values.at<float>(x,y+1)-values.at<float>(x,y-1);
-                G.at<float>(x,y)= exp(-seg_eta*(abs(0.5*dx)+abs(0.5*dy)));
+                dx = values.at<float>(r+1,c)-values.at<float>(r-1,c);
+                dy = values.at<float>(r,c+1)-values.at<float>(r,c-1);
+                G.at<float>(r,c)= exp(-seg_eta*(abs(0.5f*dx)+abs(0.5f*dy)));
             }
     }
 
     if(!show) return true;
 
-    double Gmin,Gmax;
-    cv::minMaxIdx(G,&Gmin,&Gmax);
-    float scale = 255.0f/Gmax;
-
-    for(int x=0; x < w; x++)
-        for(int y=0; y < h; y++)
-        {
-            float val = G.at<float>(x,y)*scale;
-            im.setPixel(x,y,qRgb(val,val,val));
-        }
-    out->setImage(im);
+    QImage lol = fromCVMat(G);
+    out->setImage(lol);
     return true;
 }
 
@@ -538,7 +510,7 @@ bool Tool::doKernelEstimation(bool doAll)
     {
         if(Color && ColorMode>0)
         {
-            if(!ColorLDA(false,ColorMode==2))
+            if(ColorLDA(false,ColorMode==2).empty())
             {
                 cerr << "ColorLDA failure"<<endl;
                 return false;
@@ -560,28 +532,12 @@ bool Tool::doKernelEstimation(bool doAll)
     unsigned h = im.rows;
 
     currentIt = 0;
-
-
-#ifndef CONST_GPU
-    gpu.likely = new float[w*h*nr_labels];
-    gpu.labeling = new int[w*h];
-    gpu.scribbles = new int[scribbles.size()*3];
-    gpu.label_count = new int[nr_labels];
-    gpu.colors = new float[w*h*3];
-    gpu.int_params = new int[INT_PARAMS];
-    gpu.float_params = new float[2 + 2*nr_labels];
-    gpu.textures = new float[w*h*Textures.size()];
-    gpu.temp = new float[scribbles.size()*3];
-#endif
-
     gpu.int_params[NX] = w;
     gpu.int_params[NY] = h;
     gpu.int_params[NR_SCRIBBLES] = scribbles.size();
     gpu.int_params[NR_LABELS] = nr_labels;
     gpu.int_params[TEX_DIM] = Textures.size();
-
     gpu.ani=Anisotropy;
-
 
     vector<Mat> maha(nr_labels);
     if(gpu.ani)
@@ -639,12 +595,15 @@ bool Tool::doKernelEstimation(bool doAll)
     if(Color)
     {
 
+        vector<Mat> colors;
         if (ColorMode==0)
-            cv::split(im,Colors);
+            cv::split(im,colors);
+        else
+            cv::split(LDAimage,colors);
 
         // Copy color data into gpu array
-        for(unsigned i=0; i < Colors.size();i++ )
-            memcpy(&(gpu.colors[w*h*i]), Colors[i].data,sizeof(float)*w*h);
+        for(size_t i=0; i < colors.size();i++ )
+            memcpy(&(gpu.colors[w*h*i]), colors[i].data,sizeof(float)*w*h);
 
         if(AutoParam)
         {
@@ -719,35 +678,31 @@ bool Tool::doKernelEstimation(bool doAll)
     }
 */
 
-    /*
-#ifdef CONST_GPU
+
+
+    likely.clear();
+    for(unsigned l=0; l < nr_labels; l++)
+        likely.push_back(Mat::zeros(w,h,CV_32F));
+
+
     if(!gpu_density(gpu,const_gpu))
-#else
-    if(!gpu_density(gpu))
-#endif
     {
         cerr << "Kernel estimation failed!" << endl;
         return false;
     }
+
     // Copy likelihoods
-    likely.clear();
     for(unsigned l=0; l < nr_labels; l++)
-    {
-        likely.push_back(Mat(w,h,CV_32F));
         for(unsigned x=0; x < w; x++)
             for(unsigned y=0; y < h; y++)
-                likely.at(l).at<float>(x,y)= log(gpu.likely[w*h*l + y*w + x]);
-    }
+                likely.at(l).at<float>(x,y) = log(gpu.likely[w*h*l + y*w + x]);
 
-*/
 
-    likely.clear();
-    for(unsigned l=0; l < nr_labels; l++)
-        likely.push_back(Mat(w,h,CV_32F));
-
+    /*
     auto gauss = [](float x,float var) -> float{
         return exp(-0.5f*x*x/(var*var))/(var*sqrt(2*M_PI));
     };
+
 
     float scale = 1.0f/max(w,h);
     for (int x = 0; x < w; ++x)
@@ -774,13 +729,11 @@ bool Tool::doKernelEstimation(bool doAll)
             {
                 float space=1.0f,color=1.0f;
                 float sigma = kernel_sigma;
-
                 if(alpha>0)
                 {
                     float distance = pow(x-s.x,2) + pow(y-s.y,2);
                     space = gauss(sqrt(distance)*scale,alpha);
                 }
-
                 if(sigma>0)
                 {
                     float r = Colors[0].at<float>(x,y) - Colors[0].at<float>(s.x,s.y);
@@ -788,40 +741,24 @@ bool Tool::doKernelEstimation(bool doAll)
                     float b = Colors[2].at<float>(x,y) - Colors[2].at<float>(s.x,s.y);
                     color = gauss(r,sigma)*gauss(g,sigma)*gauss(b,sigma);
                 }
-
                 likely[s.label].at<float>(x,y) += space*color;
             }
         }
 
-    for (Mat &m : likely)
-        cv::log(m,m);
+    for (Mat &m : likely) cv::log(m,m);
+
+    */
 
 
     // clamp to good numeric bounds
-    float clamp = 1000.f;
+    float clamp = 10.f;
     for (Mat &m : likely)
         for(unsigned x=0; x < w; x++)
             for(unsigned y=0; y < h; y++)
                 m.at<float>(x,y) = max(-clamp,min(m.at<float>(x,y),clamp));
 
-    // Divide by scribble number and determine labeling
-    Mat labeling(w,h,CV_32F);
-    for(unsigned x=0; x < w; x++)
-        for(unsigned y=0; y < h; y++)
-        {
-            float max=0;
-            int label=-1;
-            for(int i=0; i < nr_labels;i++)
-            {
-                float curr = likely[i].at<float>(x,y) / ((float)label_count[i]);
-                if(curr > max)
-                {
-                    max = curr;
-                    label = i;
-                }
-            }
-            labeling.at<float>(x,y) = label;
-        }
+    // Determine labeling
+    labeling = computeLabeling(likely);
 
 
 
@@ -839,17 +776,6 @@ bool Tool::doKernelEstimation(bool doAll)
             if(!stable) lab = getRgbOfLabel(-1);
             im.at<Vec3f>(y,x) = im.at<Vec3f>(y,x)*0.5 + lab*0.5;
         }
-
-#ifndef CONST_GPU
-    delete gpu.labeling;
-    delete gpu.likely;
-    delete gpu.scribbles;
-    delete gpu.label_count;
-    delete gpu.colors;
-    delete gpu.textures;
-    delete gpu.int_params;
-    delete gpu.float_params;
-#endif
 
     QImage QIm = fromCVMat(im);
     out->setImage(QIm);
@@ -1083,9 +1009,6 @@ void Tool::doDumpEstimation()
             }
         stringstream ss;
 
-#ifdef __APPLE__
-        ss << "../../../";
-#endif
         ss << i << "_estimate.png";
         image.save(ss.str().c_str());
 
@@ -1197,25 +1120,8 @@ void Tool::doGPUSegmentationConvergence()
 bool Tool::GPUSegmentation(bool stepwise)
 {
 
-
     unsigned w = likely.at(0).rows;
     unsigned h = likely.at(0).cols;
-
-    QImage im(w,h,QImage::Format_RGB32);
-
-#ifndef CONST_GPU
-
-    gpu.likely = new float[w*h*nr_labels];
-    gpu.primal = new float[2*w*h*nr_labels];
-    gpu.dual = new float[2*w*h*nr_labels];
-    gpu.g = new float[w*h];
-
-    gpu.temp = new float[w*h*nr_labels];
-    gpu.labeling = new int[w*h];
-
-    gpu.int_params = new int[INT_PARAMS];
-    gpu.float_params = new float[FLOAT_PARAMS];
-#endif
 
     gpu.int_params[NX] = w;
     gpu.int_params[NY] = h;
@@ -1230,7 +1136,7 @@ bool Tool::GPUSegmentation(bool stepwise)
     for(unsigned x=0; x < w; x++)
         for(unsigned y=0; y < h; y++)
         {
-            gpu.g[y*w+x] = G.at<float>(x,y);
+            gpu.g[y*w+x] = G.at<float>(y,x);
         }
 
     for(unsigned l=0; l < nr_labels; l++)
@@ -1253,11 +1159,7 @@ bool Tool::GPUSegmentation(bool stepwise)
     }
 
 
-#ifdef CONST_GPU
     if(!gpu_segmentation(gpu, const_gpu,currIt))
-#else
-    if(!gpu_segmentation(gpu, currIt))
-#endif
     {
         cerr << "Error in segmentation!" << endl;
         return false;
@@ -1289,64 +1191,45 @@ bool Tool::GPUSegmentation(bool stepwise)
                 dual.at(l).at<float>(x,y) =    gpu.dual[2*c*l     + y*w+x];
                 dual.at(l).at<float>(x+w,y) =  gpu.dual[2*c*l + c + y*w+x];
             }
-
-            labeling.at<float>(x,y)= gpu.labeling[y*w+x];
         }
+
+    labeling = computeLabeling(primal);
+
 
     // compute duality gap
     float p=0,d=0;
-    for(unsigned x=0; x < w; x++)
-        for(unsigned y=0; y < h; y++)
+    for(unsigned x=1; x < w-1; x++)
+        for(unsigned y=1; y < h-1; y++)
         {
             // primal part
             for(unsigned l=0; l < nr_labels;l++)
             {
-                if(x<w-1)
-                    p -= abs(real_primal.at(l).at<float>(x+1,y) -real_primal.at(l).at<float>(x,y));
-                if(y<h-1)
-                    p -= abs(real_primal.at(l).at<float>(x,y+1) -real_primal.at(l).at<float>(x,y));
-
+                p -= abs(real_primal.at(l).at<float>(x+1,y) -real_primal.at(l).at<float>(x,y));
+                p -= abs(real_primal.at(l).at<float>(x,y+1) -real_primal.at(l).at<float>(x,y));
                 p+= likely.at(l).at<float>(x,y)*real_primal.at(l).at<float>(x,y);
             }
 
             // dual part
-            float min_val=1000;
+            float min_val=numeric_limits<float>::lowest();
             for(unsigned l=0; l < nr_labels;l++)
             {
                 float div=0;
-                if(x>0)
-                    div -= dual.at(l).at<float>(x-1,y);
-                if(x<w-1)
-                    div += dual.at(l).at<float>(x,y);
-                if(y>0)
-                    div -= dual.at(l).at<float>(x+w,y-1);
-                if(y>h-1)
-                    div += dual.at(l).at<float>(x+w,y);
-
+                div -= dual.at(l).at<float>(x-1,y);
+                div += dual.at(l).at<float>(x,y);
+                div -= dual.at(l).at<float>(x+w,y-1);
+                div += dual.at(l).at<float>(x+w,y);
                 float val = likely.at(l).at<float>(x,y) - div;
                 if (val < min_val)
                     min_val = val;
             }
             d += min_val;
         }
-    //cerr << currentIt << " " <<  p << " " << d << " " << p-d << endl;
 
     Mat beauty = makeBeautifulSegmentation();
     QImage QIm = fromCVMat(beauty);
     out->setImage(QIm);
 
 
-#ifndef CONST_GPU
-
-    delete gpu.likely;
-    delete gpu.labeling;
-    delete gpu.primal;
-    delete gpu.dual;
-    delete gpu.temp;
-    delete gpu.int_params;
-    delete gpu.float_params;
-
-#endif
     return true;
 
 }
@@ -1480,22 +1363,6 @@ bool Tool::Wavelet(bool show)
 
 
         }
-
-
-#ifndef CONST_GPU
-
-        gpu.hh = new float[w*h*NrWaveletSteps];
-        gpu.hl = new float[w*h*NrWaveletSteps];
-        gpu.lh = new float[w*h*NrWaveletSteps];
-        gpu.hh_avg = new float[w*h*NrWaveletSteps];
-        gpu.hl_avg = new float[w*h*NrWaveletSteps];
-        gpu.lh_avg = new float[w*h*NrWaveletSteps];
-        gpu.hh_stddev = new float[w*h*NrWaveletSteps];
-        gpu.hl_stddev = new float[w*h*NrWaveletSteps];
-        gpu.lh_stddev = new float[w*h*NrWaveletSteps];
-        gpu.int_params = new int[INT_PARAMS];
-
-#endif
 
         gpu.int_params[NX] = w;
         gpu.int_params[NY] = h;
@@ -1647,63 +1514,37 @@ bool Tool::Wavelet(bool show)
     }
 
 */
-
-}
-
-bool Tool::LDA(Mat &Projector,Mat Call, vector<Mat> Ceach)
-{
-
-    unsigned dim = Call.cols;
-    Mat eigvec,temp;
-
-    /*
-    Projector = mat(dim,dim);
-    mat Sw = zeros(dim,dim),Sb = cov(Call,1);  // Norm type=1
-    for(unsigned i=0; i < nr_labels;i++)
-        Sw = Sw + cov(Ceach.at(i),1);
-    cx_vec eigval;
-
-
-    if(!eig_gen(eigval,temp, eigvec, inv(Sw)*Sb)) return false;
-*/
-
-
-    /*
-    // Do an index sort for the eigenvectors
-    vector<double> eigen;
-    vector<int> index;
-    for(int n = 0; n < NrWaveletSteps*6;n++)
-        eigen.push_back(eigval.at(n).real());
-    sort(eigen.begin(),eigen.end());
-    int currInd=NrWaveletSteps*6-1,counter=0;
-    while(index.size() != NrWaveletSteps*6)
-    {
-        if (eigval.at(counter).real() == eigen.at(currInd))
-        {
-            index.push_back(counter);
-            currInd--;
-        }
-        if (counter++ == NrWaveletSteps*6-1) counter=0;
-    }
-
-    // Bring the projection matrix into right order (descending eigenvalues)
-    for(int i=0; i < NrWaveletSteps*6; i++)
-    {
-        int eig_i = index.at(i);
-        for(int j=0; j < NrWaveletSteps*6; j++)
-            LDATexMatrix.at(j,i) = eigvec.at(j,eig_i).real();
-    }
-
-
-    for(unsigned i=0; i < dim; i++)
-        for(unsigned j=0; j < dim; j++)
-            Projector.at<float>(i,j) = eigvec.at<float>(j,i);
-            */
-
     return true;
+
 }
 
-bool Tool::OLDA(Mat &Projector,Mat Call, vector<Mat> Ceach,  vector<Scribble> &scrib, vector<unsigned> &count)
+Mat Tool::LDA(Mat Call, vector<Mat> Ceach)
+{
+    unsigned dim = Call.cols;
+    Mat Sw = Mat::zeros(dim,dim,CV_64F);
+    Mat cov,mu,Sw_inv;
+
+    cv::calcCovarMatrix(Call,cov, mu, CV_COVAR_NORMAL | CV_COVAR_ROWS);
+    Mat Sb = cov / (Call.rows - 1);
+
+    for (Mat &m : Ceach)
+    {
+        cv::calcCovarMatrix(m,cov, mu, CV_COVAR_NORMAL | CV_COVAR_ROWS);
+        cov = cov / (m.rows - 1);
+        Sw += cov;
+    }
+
+    cv::invert(Sw,Sw_inv);
+    Mat fisher = Sw_inv*Sb, eigval,eigvec;
+    if (!cv::eigen(fisher,eigval,eigvec)) return Mat();
+
+    eigvec.convertTo(eigvec,CV_32F);
+    eigvec = eigvec.t();
+
+    return eigvec;
+}
+
+Mat Tool::OLDA(Mat Call, vector<Mat> Ceach,  vector<Scribble> &scrib, vector<unsigned> &count)
 {
 
     /*
@@ -1737,7 +1578,7 @@ bool Tool::OLDA(Mat &Projector,Mat Call, vector<Mat> Ceach,  vector<Scribble> &s
     if (!qr(G,temp,U*diagmat(Sigma).i()*P))return false;
     Projector = trans(G);
 */
-    return true;
+    return Mat();
 }
 
 void Tool::doWavelet()
@@ -1884,7 +1725,7 @@ double Tool::BenchIcgFile(QString file)
     int best_steps, best_winsize, best_texdim;
     int currRun=0;
 
-    if(!ColorLDA(false,1))
+    if(ColorLDA(false,1).empty())
     {
         cerr << "ColorLDA FAIL" << endl;
         return 0;
@@ -1958,8 +1799,6 @@ void Tool::doBenchmark()
 void Tool::doBenchmark(string dir)
 {
 
-#ifndef __APPLE__
-
     double total_score=0;
     int number_tests=0;
     vector<string> files;
@@ -2011,7 +1850,6 @@ void Tool::doBenchmark(string dir)
     output << "segmentation " << seg_tau << " " << seg_lambda << " " << GMode << " " << seg_eta << endl;
     output << "brush " << BrushSize << endl;
     output.close();
-#endif
 
 }
 

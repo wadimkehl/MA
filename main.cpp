@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
     etaSpinBox->setRange(0, 10);
     etaSpinBox->setDecimals(4);
     etaSpinBox->setSingleStep(0.05);
-    etaSpinBox->setValue(0.1);
+    etaSpinBox->setValue(tool->seg_eta);
     QPushButton *gButton = new QPushButton("Show");
     QPushButton *LBPButton = new QPushButton("LBP");
     QVBoxLayout *gLayout = new QVBoxLayout();

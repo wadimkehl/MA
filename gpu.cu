@@ -196,122 +196,6 @@ __global__ void kernel_segmentation(float *likely,float *primal, float *dual, fl
 
 }
 
-
-__global__ void kernel_labeling(float *primal, int *labeling, size_t prim_p, int nx, int ny, int nr_labels)
-{
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x < nx && y < ny) {
-        int pos = y*prim_p + x, label=-1, c = prim_p*ny;
-        int off = c*nr_labels;
-        float max=0;
-        for(int i=0; i < nr_labels;i++)
-        {
-            float curr =primal[off + pos + c*i];
-            if(curr > max)
-            {
-                max = curr;
-                label = i;
-            }
-        }
-        labeling[y*nx+x] = label;
-    }
-}
-
-
-
-
-bool gpu_segmentation(GPU_DATA data, int &currIt)
-{
-
-    int nx = data.int_params[NX];
-    int ny = data.int_params[NY];
-    int nr_labels = data.int_params[NR_LABELS];
-    int nr_seg_it = data.int_params[NR_SEG_IT];
-    float tau = data.float_params[SEG_TAU];
-
-    float size = 16;
-    dim3 blockSize(size, size);
-    dim3 gridSize( (int)ceil(nx/size), (int)ceil(ny/size) );
-
-    float *likely, *temp, *primal,*dual, *g;
-    int *labeling;
-
-
-    size_t lt_p,pd_p,g_p;
-    CUDA(cudaMallocPitch((void**) &likely,  &lt_p,    nx*sizeof(float), ny*nr_labels), "MallocLikely") ;
-    CUDA(cudaMallocPitch((void**) &primal,  &pd_p,    nx*sizeof(float), ny*nr_labels*2), "MallocPrimal") ;
-    CUDA(cudaMallocPitch((void**) &dual,    &pd_p,    nx*sizeof(float), ny*nr_labels*2), "MallocDual") ;
-    CUDA(cudaMallocPitch((void**) &temp,    &lt_p,    nx*sizeof(float), ny*nr_labels), "MallocTemp") ;
-    CUDA(cudaMallocPitch((void**) &g,       &g_p,     nx*sizeof(float), ny), "MallocG") ;
-    CUDA(cudaMalloc(&(labeling),   nx*ny*sizeof(int)),"MallocLabeling") ;
-
-    CUDA(cudaMemcpy2D((void*) likely,   lt_p,data.likely,nx*sizeof(float) , nx*sizeof(float), ny*nr_labels,cudaMemcpyHostToDevice),"MemCpyLikely");
-    CUDA(cudaMemcpy2D((void*) g,         g_p,data.g,     nx*sizeof(float) , nx*sizeof(float), ny,cudaMemcpyHostToDevice),"MemCpyG");
-
-
-    if(currIt==0)
-    {
-        CUDA(cudaMemset2D((void*)primal, pd_p,0, nx*sizeof(float), ny*nr_labels*2), "MemsetPrimal") ;
-        CUDA(cudaMemset2D((void*)dual,   pd_p,0, nx*sizeof(float), ny*nr_labels*2), "MemsetDual") ;
-    }
-    else
-    {
-        CUDA(cudaMemcpy2D((void*) primal, pd_p,data.primal,nx*sizeof(float) , nx*sizeof(float), 2*ny*nr_labels,cudaMemcpyHostToDevice),"MemCpyPrimal");
-        CUDA(cudaMemcpy2D((void*) dual,   pd_p,data.dual  ,nx*sizeof(float) , nx*sizeof(float), 2*ny*nr_labels,cudaMemcpyHostToDevice),"MemCpyDual");
-    }
-
-    struct timeval  t1,t2;
-    gettimeofday(&t1, NULL);
-    if(data.stepwise)
-    {
-
-        for(int i=0; i < nr_seg_it;i++,currIt++)
-        {
-            KERNEL (kernel_segmentation,gridSize, blockSize)
-                    (likely, primal,dual,temp,g,tau,nx,ny,nr_labels,lt_p/sizeof(float),pd_p/sizeof(float),g_p/sizeof(float),1);
-        }
-        gettimeofday(&t2, NULL);
-        double diff = ((t2.tv_sec) * 1000.0 + (t2.tv_usec) / 1000.0) - ((t1.tv_sec) * 1000.0 + (t1.tv_usec) / 1000.0) ;
-        //cerr << diff << "ms" << endl;
-
-    }
-    else
-    {
-        int start_it = currIt;
-        while(currIt++-start_it<1500 )
-        {
-
-            KERNEL (kernel_segmentation,gridSize, blockSize)
-                    (likely, primal,dual,temp,g,tau,nx,ny,nr_labels,lt_p/sizeof(float),pd_p/sizeof(float),g_p/sizeof(float),1);
-        }
-        gettimeofday(&t2, NULL);
-        double diff = ((t2.tv_sec) * 1000.0 + (t2.tv_usec) / 1000.0) - ((t1.tv_sec) * 1000.0 + (t1.tv_usec) / 1000.0) ;
-        cerr << diff << "ms" << endl;
-    }
-
-
-    // Determine labeling
-    KERNEL(kernel_labeling,gridSize,blockSize) (primal, labeling, pd_p/sizeof(float), nx,ny,nr_labels);
-    CUDA(cudaThreadSynchronize(),"SyncLabeling");
-
-    CUDA(cudaMemcpy(  (void*) data.labeling,labeling,   nx*ny*sizeof(int),cudaMemcpyDeviceToHost),"MemCpyLabeling");
-    CUDA(cudaMemcpy2D((void*) data.primal,  nx*sizeof(float),primal, pd_p, nx*sizeof(float), 2*ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyPrimal");
-    CUDA(cudaMemcpy2D((void*) data.dual  ,  nx*sizeof(float),dual,   pd_p, nx*sizeof(float), 2*ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyDual");
-
-
-    cudaFree(likely);
-    cudaFree(temp);
-    cudaFree(g);
-    cudaFree(primal);
-    cudaFree(dual);
-    cudaFree(labeling);
-
-    return true;
-
-
-}
-
 bool gpu_segmentation(GPU_DATA data, GPU_DATA const_gpu,int &currIt)
 {
 
@@ -341,6 +225,7 @@ bool gpu_segmentation(GPU_DATA data, GPU_DATA const_gpu,int &currIt)
     }
 
 
+    int dual_space = 0;
     if(data.stepwise)
     {
 
@@ -348,7 +233,7 @@ bool gpu_segmentation(GPU_DATA data, GPU_DATA const_gpu,int &currIt)
         {
             KERNEL (kernel_segmentation,gridSize, blockSize)
                     (const_gpu.likely, const_gpu.primal,const_gpu.dual,const_gpu.temp,const_gpu.g,tau,nx,ny,nr_labels,
-                     const_gpu.lt_p/sizeof(float),const_gpu.pd_p/sizeof(float),const_gpu.g_p/sizeof(float),1);
+                     const_gpu.lt_p/sizeof(float),const_gpu.pd_p/sizeof(float),const_gpu.g_p/sizeof(float),dual_space);
         }
 
     }
@@ -361,18 +246,13 @@ bool gpu_segmentation(GPU_DATA data, GPU_DATA const_gpu,int &currIt)
 
             KERNEL (kernel_segmentation,gridSize, blockSize)
                     (const_gpu.likely, const_gpu.primal,const_gpu.dual,const_gpu.temp,const_gpu.g,tau,nx,ny,nr_labels,
-                     const_gpu.lt_p/sizeof(float),const_gpu.pd_p/sizeof(float),const_gpu.g_p/sizeof(float),1);
+                     const_gpu.lt_p/sizeof(float),const_gpu.pd_p/sizeof(float),const_gpu.g_p/sizeof(float),dual_space);
         }
 
 
     }
 
-
-    // Determine labeling
-    KERNEL(kernel_labeling,gridSize,blockSize) (const_gpu.primal, const_gpu.labeling, const_gpu.pd_p/sizeof(float), nx,ny,nr_labels);
-    CUDA(cudaThreadSynchronize(),"SyncLabeling");
-
-    CUDA(cudaMemcpy(  (void*) data.labeling,const_gpu.labeling,   nx*ny*sizeof(int),cudaMemcpyDeviceToHost),"MemCpyLabeling");
+    CUDA(cudaThreadSynchronize(),"Syncsegmentation");
     CUDA(cudaMemcpy2D((void*) data.primal,  nx*sizeof(float),const_gpu.primal, const_gpu.pd_p, nx*sizeof(float), ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyPrimal");
     CUDA(cudaMemcpy2D((void*) data.dual  ,  nx*sizeof(float),const_gpu.dual,   const_gpu.pd_p, nx*sizeof(float), 2*ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyDual");
 
@@ -396,7 +276,7 @@ __device__ float p2NormSq(int x1, int y1, int x2, int y2)
 }
 
 
-__global__ void kernel_density(int *scribbles, float *colors, float *textures, float *params, float *likely, int *labeling,float *temp,
+__global__ void kernel_density(int *scribbles, float *colors, float *textures, float *params, float *likely,float *temp,
                                int nx, int ny, int nr_labels, int nr_scribbles,int tex_dim, int *label_count,
                                size_t like_p,size_t col_p,size_t tex_p)
 {
@@ -479,109 +359,19 @@ __global__ void kernel_density(int *scribbles, float *colors, float *textures, f
                     texture *= kernel_gauss(diff,beta);
                 }
 
-
-
             }
-
 
             likely[ny*like_p*slabel + y*like_p + x] += space*color*texture;
 
         }
 
-        // Divide by scribble number and determine labeling
-        float max=0;
-        int label=-1;
+        // Divide by scribble number
         for(int i=0; i < nr_labels;i++)
-        {
-            float curr = likely[ny*like_p*i + y*like_p + x] / ((float)label_count[i]);
-            if(curr > max)
-            {
-                max = curr;
-                label = i;
-            }
-        }
-        labeling[nx*y+x] = label;
+            likely[ny*like_p*i + y*like_p + x] /= ((float)label_count[i]);
 
     }
 
 }
-
-
-
-bool gpu_density(GPU_DATA data)
-{
-
-
-
-    int nx = data.int_params[NX];
-    int ny = data.int_params[NY];
-    int nr_labels = data.int_params[NR_LABELS];
-    int nr_scribbles = data.int_params[NR_SCRIBBLES];
-    int tex_dim = data.int_params[TEX_DIM];
-    float size = 16;
-    dim3 blockSize(size, size);
-    dim3 gridSize( (int)ceil(nx/size), (int)ceil(ny/size) );
-
-
-    float *likely, *colors, *textures, *params,*temp;
-    int *labeling, *scribbles, *label_count;
-
-    size_t like_p,col_p, tex_p;
-    cudaDeviceReset(); size_t free,total;
-    cudaMemGetInfo	(&free,&total);
-    cout << "GPU Memory: Total: " << total/(1024*1024) << " MB    Free: " <<  free/(1024*1024)  << " MB" << endl;
-
-    CUDA(cudaMallocPitch((void**) &likely,&like_p,    nx*sizeof(float), ny*nr_labels), "MallocLikely") ;
-    CUDA(cudaMemset2D((void*)likely, like_p,0, nx*sizeof(float), ny*nr_labels), "MemsetLikely") ;
-
-    CUDA(cudaMalloc(&(labeling),  nx*ny*sizeof(int)),"MallocLabeling") ;
-
-    CUDA(cudaMalloc(&(scribbles),              nr_scribbles*sizeof(int)*3),"MallocScribbles") ;
-    CUDA(cudaMemcpy(scribbles, data.scribbles, nr_scribbles*sizeof(int)*3,cudaMemcpyHostToDevice),"MemCopyScribbles");
-
-
-    CUDA(cudaMallocPitch((void**) &colors,&col_p,    nx*sizeof(float), ny*3), "MallocColors") ;
-    CUDA(cudaMemcpy2D((void*) colors, col_p,data.colors,nx*sizeof(float) , nx*sizeof(float), ny*3,cudaMemcpyHostToDevice),"MemCpyColors");
-
-    CUDA(cudaMallocPitch((void**) &textures,&tex_p,    nx*sizeof(float), ny*tex_dim), "MallocTex") ;
-    CUDA(cudaMemcpy2D((void*) textures, tex_p,data.textures,nx*sizeof(float) , nx*sizeof(float), ny*tex_dim,cudaMemcpyHostToDevice),"MemCpyTex");
-
-
-    CUDA(cudaMalloc(&(label_count),                nr_labels*sizeof(int)),"MallocLabelCount") ;
-    CUDA(cudaMemcpy(label_count, data.label_count, nr_labels*sizeof(int),cudaMemcpyHostToDevice),"MemCopyLabelCount");
-
-
-    CUDA(cudaMalloc(&(params),                   (2+2*nr_labels)*sizeof(float)),"MallocFLOATPARAMS") ;
-    CUDA(cudaMemcpy(params, data.float_params,   (2+2*nr_labels)*sizeof(float),cudaMemcpyHostToDevice),"MemCopyFLOATPARAMS");
-
-    CUDA(cudaMalloc(&(temp),           nr_scribbles*3*sizeof(float)),"MallocTemp") ;
-    CUDA(cudaMemcpy(temp, data.temp,   nr_scribbles*3*sizeof(float),cudaMemcpyHostToDevice),"MemCopyTemp");
-
-
-    KERNEL(kernel_density,gridSize,blockSize)(scribbles, colors, textures,params,likely, labeling,temp,
-                                              nx,ny,nr_labels,nr_scribbles,tex_dim, label_count,
-                                              like_p/sizeof(float),col_p/sizeof(float),tex_p/sizeof(float));
-
-
-    CUDA(cudaMemcpy(data.labeling, labeling, nx*ny*sizeof(int),  cudaMemcpyDeviceToHost),"MemCpyLabeling");
-    CUDA(cudaMemcpy2D((void*) data.likely, nx*sizeof(float),likely, like_p, nx*sizeof(float), ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyLikely");
-
-    cudaFree(likely);
-    cudaFree(labeling);
-    cudaFree(scribbles);
-    cudaFree(colors);
-    cudaFree(textures);
-    cudaFree(label_count);
-    cudaFree(params);
-    cudaFree(temp);
-
-
-
-    return true;
-
-
-}
-
 
 
 bool gpu_density(GPU_DATA data, GPU_DATA const_gpu)
@@ -609,14 +399,12 @@ bool gpu_density(GPU_DATA data, GPU_DATA const_gpu)
     CUDA(cudaMemcpy(const_gpu.temp, data.temp,   nr_scribbles*3*sizeof(float),cudaMemcpyHostToDevice),"MemCopyTemp");
 
     KERNEL(kernel_density,gridSize,blockSize)(const_gpu.scribbles, const_gpu.colors, const_gpu.textures,const_gpu.float_params,
-                                              const_gpu.likely, const_gpu.labeling,const_gpu.temp,
+                                              const_gpu.likely, const_gpu.temp,
                                               nx,ny,nr_labels,nr_scribbles,tex_dim, const_gpu.label_count,
                                               const_gpu.lt_p/sizeof(float),const_gpu.col_p/sizeof(float),const_gpu.tex_p/sizeof(float));
 
 
-    CUDA(cudaMemcpy(data.labeling, const_gpu.labeling, nx*ny*sizeof(int),  cudaMemcpyDeviceToHost),"MemCpyLabeling");
     CUDA(cudaMemcpy2D((void*) data.likely, nx*sizeof(float),const_gpu.likely, const_gpu.lt_p, nx*sizeof(float), ny*nr_labels,cudaMemcpyDeviceToHost),"MemCpyLikely");
-
 
     return true;
 

@@ -24,7 +24,6 @@
 #define CUDA(x,y) {cudaError_t e = x; if(cudaSuccess != e) {printf("CUDAError: %s, Code: %i, String: %s\n",y,e,cudaGetErrorString(e));return false;}}
 #define CUDA_2(x,y) {cudaError_t e = x; if(cudaSuccess != e) {printf("CUDAError: %s, Code: %i, String: %s\n",y,e,cudaGetErrorString(e));}}
 
-//#define CUDA(x,y) x;
 
 using namespace std;
 
@@ -37,7 +36,6 @@ struct GPU_DATA
     float *textures; // x*y*tex_dimensions
 
     int *label_count; // label
-    int *labeling; // x*y
     float *likely; // x*y*nr_labels
 
 
